@@ -20,17 +20,40 @@ wave2_url  <- "https://raw.githubusercontent.com/hremjach/LIWS/main/LIWS_wave_2.
 df_wave1 <- read_sav(curl(wave1_url, "rb"))
 df_wave2 <- read_sav(curl(wave2_url, "rb"))
 
-###
+# Selecting: 
+#   idnmbr    - respondent ID
+#   pplhlp    - perceived helpfulness (social trust measure)
+#   pplfair   - perceived fairness (social trust measure)
+#   agea      - age (control)
+#   gndr      - gender (control)
+#   eisced    - education level (control)
+#   region    - region of Ukraine (control)
+#   tpstlul   - urban/rural settlement type (control)
+#   hinctnta  - household net income (control)
 
 df_wave1 <- df_wave1 %>% 
-  select(idnmbr, pplhlp, pplfair, happy) %>% 
+  select(idnmbr, pplhlp, pplfair, agea, gndr, eisced, region, tpstlul, hinctnta) %>% 
   mutate(wave = "first")
+
+# Selecting:
+#   idnmbr     - respondent ID
+#   pplhlp     - perceived helpfulness (social trust measure)
+#   pplfair    - perceived fairness (social trust measure)
+#   expdi      - income decrease (hardship)
+#   exple      - job loss (hardship)
+#   expdph     - deterioration of physical health (hardship)
+#   expdmh     - deterioration of mental health (hardship)
+#   expsfm     - separation from family members (hardship)
+#   expldh     - housing loss/damage (hardship)
+#   expldp     - other property loss/damage (hardship)
+#   expinj     - injury to respondent/family (hardship)
+#   dwarlst    - lost acquaintances/relatives during war (hardship)
+#   chngplr    - displacement indicator (hardship)
 
 df_wave2 <- df_wave2 %>% 
   select(idnmbr, pplhlp, pplfair, expdi, exple, expdph, expdmh, expsfm,
-         expldh, expldp, expinj, dwarlst, chngplr, happy) %>% 
+         expldh, expldp, expinj, dwarlst, chngplr) %>% 
   mutate(wave = "second")
-
 
 # ----------------------------------------------
 # 2. Keep only respondents present in both waves
@@ -106,7 +129,33 @@ df_final <- df_long %>%
   )
 
 # ----------------------------------------------
-# 4. Carry wave-2 hardship values back to wave-1
+# 4. Carry each person’s wave‐1 controls into wave‐2
+# ----------------------------------------------
+
+# Make a tiny lookup table of controls from wave 1 only:
+wave1_controls <- df_final %>%
+  filter(wave == "first") %>%
+  select(idnmbr, agea, gndr, eisced, region, tpstlul, hinctnta)
+
+# Left-join those wave 1 controls onto every row in df_final:
+df_final <- df_final %>%
+  left_join(wave1_controls,
+            by = "idnmbr",
+            suffix = c("", ".w1")) %>%
+  # 4c. For each control, if it's wave 2, replace NA with the wave 1 value:
+  mutate(
+    agea    = if_else(wave == "second", agea.w1, agea),
+    gndr    = if_else(wave == "second", gndr.w1, gndr),
+    eisced  = if_else(wave == "second", eisced.w1, eisced),
+    region  = if_else(wave == "second", region.w1, region),
+    tpstlul = if_else(wave == "second", tpstlul.w1, tpstlul),
+    hinctnta = if_else(wave == "second", hinctnta.w1, hinctnta)
+  ) %>%
+  # Drop the “.w1” columns (we no longer need them):
+  select(-ends_with(".w1"))
+
+# ----------------------------------------------
+# 5. Carry wave-2 hardship values back to wave-1
 # ----------------------------------------------
 hardship_cols <- c(
   "knew_deaths_dummy", "family_death_dummy", "displaced_dummy",
@@ -147,10 +196,14 @@ pretty_names <- c(
 
 # Define models for 4 combinations: pplfair/pplhlp × Any/Index
 formulas <- list(
-  Fair_Any   = pplfair ~ wave_bn * any_hardship_dummy + (1 | idnmbr),
-  Fair_Index = pplfair ~ wave_bn * affected_index     + (1 | idnmbr),
-  Help_Any   = pplhlp  ~ wave_bn * any_hardship_dummy + (1 | idnmbr),
-  Help_Index = pplhlp  ~ wave_bn * affected_index     + (1 | idnmbr)
+  Fair_Any   = pplfair ~ wave_bn * any_hardship_dummy + agea + gndr + eisced + 
+    region + tpstlul + hinctnta + (1 | idnmbr),
+  Fair_Index = pplfair ~ wave_bn * affected_index + agea + gndr + eisced + 
+    region + tpstlul + hinctnta   + (1 | idnmbr),
+  Help_Any   = pplhlp  ~ wave_bn * any_hardship_dummy + agea + gndr + eisced + 
+    region + tpstlul + hinctnta + (1 | idnmbr),
+  Help_Index = pplhlp  ~ wave_bn * affected_index + agea + gndr + eisced + 
+    region + tpstlul + hinctnta + (1 | idnmbr)
 )
 
 models <- map(formulas, ~ lmer(.x, data = df_final, REML = FALSE, na.action = na.exclude))
@@ -171,16 +224,19 @@ modelsummary(
   )
 )
 
-
 # ==============================================
 # 6. Separate LMMs for each hardship indicator
 # ==============================================
+
+# Define the set of control variables as a single string
+control_vars_str <- "agea + gndr + eisced + region + tpstlul + hinctnta"
 
 # Fit one random-intercept model per hardship variable (outcome: pplfair)
 
 sep_models_fair <- map(hardship_cols, function(var) {
   # Construct formula: pplfair ~ wave_bn * var + (1 | idnmbr)
-  fml <- as.formula(paste0("pplfair ~ wave_bn * ", var, " + (1 | idnmbr)"))
+  fml <- as.formula(paste0("pplfair ~ wave_bn * ", var, "+", control_vars_str,
+                           " + (1 | idnmbr)"))
   lmer(
     fml,
     data       = df_final,
@@ -195,20 +251,43 @@ names(sep_models_fair) <- hardship_cols
 # Example: view summary for 'family_death_dummy'
 summary(sep_models_fair$family_death_dummy)
 
-# Render a combined table for all 'pplfair' hardship interactions
-modelsummary(
-  sep_models_fair,
-  stars    = TRUE,
-  fmt      = 2,
-  title    = "Separate LMMs for Fair-Trust × Each Hardship",
-  gof_omit = "IC|Log|REML|Num"
-) %>%
-  save_as_docx(path = "sep_hardship_fair_models.docx")
+# Define groups of 4 hardship variables each
+groups <- list(
+  group1 = hardship_cols[1:4],
+  group2 = hardship_cols[5:8],
+  group3 = hardship_cols[9:14]
+)
+
+# Loop over each group and produce a flextable + save as .docx
+for (i in seq_along(groups)) {
+  grp_vars <- groups[[i]]
+  
+  # Subset the list of fitted models to just these four
+  models_subset <- sep_models_fair[grp_vars]
+  
+  # Create a flextable hiding the controls
+  tbl <- modelsummary(
+    models_subset,
+    stars      = TRUE,
+    fmt        = 2,
+    title      = paste0("Separate LMMs for Fair-Trust × Each Hardship: Group ", i),
+    coef_omit  = "agea|gndr|eisced|region|tpstlul|hinctnta",
+    gof_omit   = "IC|Log|REML|Num",
+    output     = "flextable"
+  )
+  
+  # Save this flextable as its own Word document
+  flextable::save_as_docx(
+    tbl,
+    path = paste0("sep_hardship_fair_models_group", i, ".docx")
+  )
+}
 
 # Fit one random-intercept model per hardship variable for the "helpfulness" item
 sep_models_help <- map(hardship_cols, function(var) {
   # Construct formula: pplhlp ~ wave_bn * var + (1 | idnmbr)
-  fml <- as.formula(paste0("pplhlp ~ wave_bn * ", var, " + (1 | idnmbr)"))
+  fml <- as.formula(paste0("pplhlp ~ wave_bn * ", var, "+", control_vars_str,
+                           " + (1 | idnmbr)"))
   lmer(
     fml,
     data      = df_final,
@@ -223,12 +302,41 @@ names(sep_models_help) <- hardship_cols
 # Example: view summary for 'family_death_dummy'
 summary(sep_models_help$family_death_dummy)
 
-# Render a combined table for all 'pplhlp' hardship interactions
-modelsummary(
-  sep_models_help,
-  stars    = TRUE,
-  fmt      = 2,
-  title    = "Separate LMMs for Helpfulness-Trust × Each Hardship",
-  gof_omit = "IC|Log|REML|Num"
-) %>%
-  save_as_docx(path = "sep_hardship_helpfulness_models.docx")
+# Define groups of 4 hardship variables each
+groups <- list(
+  group1 = hardship_cols[1:4],
+  group2 = hardship_cols[5:8],
+  group3 = hardship_cols[9:14]
+)
+
+# Loop over each group and produce a flextable + save as .docx
+for (i in seq_along(groups)) {
+  grp_vars <- groups[[i]]
+  
+  # Subset the list of fitted models to just these four
+  models_subset <- sep_models_help[grp_vars]
+  
+  # Create a flextable hiding the controls
+  tbl <- modelsummary(
+    models_subset,
+    stars      = TRUE,
+    fmt        = 2,
+    title      = paste0("Separate LMMs for Helpfulness-Trust × Each Hardship: Group ", i),
+    coef_omit  = "agea|gndr|eisced|region|tpstlul|hinctnta",
+    gof_omit   = "IC|Log|REML|Num",
+    output     = "flextable"
+  )
+  
+  # Save this flextable as its own Word document
+  flextable::save_as_docx(
+    tbl,
+    path = paste0("sep_hardship_helpfulness_models_group", i, ".docx")
+  )
+}
+
+
+
+
+
+
+
