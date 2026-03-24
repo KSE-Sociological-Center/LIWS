@@ -17,7 +17,7 @@ Using these panel data, our team has researched war's influence on individual ch
 3. Karakai, D., & Moskotina, R. (2025). Existential upheavals: Tracing war's immediate effect on individual religiosity in Ukraine. *Social Compass*, *72*(1), 66–85. https://doi.org/10.1177/00377686241311421
 4. Moskotina, R., Karakai, D., & Hatsko, V. (2025). Ukrainians’ Attitudes at the Start of the War: From Authoritarian Defenders of Democracy to Unhappy Yet Satisfied with Life. *Journal of the Analytical Platform ‘Vox Ukraine’*. https://voxukraine.org/en/ukrainians-attitudes-at-the-start-of-the-war-from-authoritarian-defenders-of-democracy-to-unhappy-yet-satisfied-with-life
 5. Karakai, D., Hatsko, V., & Moskotina, R. (2025). Does War Create or Destroy Social Bonds? It Depends on Definitions. *Journal of the Analytical Platform ‘Vox Ukraine’*. https://voxukraine.org/en/does-war-create-or-destroy-social-bonds-it-depends-on-definitions
-6. Moskotina, R. Wie der Krieg sich auf Glück und Lebenszufriedenheit in der Ukraine auswirkt. *Ukraine-Analysen*. https://laender-analysen.de/ukraine-analysen/319/ukraine-krieg-glueck-lebenszufriedenheit/
+6. Moskotina, R. (2025). Wie der Krieg sich auf Glück und Lebenszufriedenheit in der Ukraine auswirkt. *Ukraine-Analysen*. https://laender-analysen.de/ukraine-analysen/319/ukraine-krieg-glueck-lebenszufriedenheit/
 
 If you have any questions about these data or would like to collaborate with us on an article, simply contact us via email: rmoskotina@kse.org.ua
 
