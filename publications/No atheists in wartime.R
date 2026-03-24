@@ -249,7 +249,7 @@ make_sankey <- function(w1, w2, title_text) {
 draw_segment(
   make_segment(liws_w1_panel$pray, liws_w2$pray),
   "Figure 2.1. Individual religious practice dynamics (prayer)"
-)
+) # The yellow dots represent the proportion of responses in the second wave
 
 make_sankey(
   liws_w1_panel$pray, liws_w2$pray,
@@ -263,7 +263,7 @@ make_sankey(
 draw_segment(
   make_segment(liws_w1_panel$rlgatnd, liws_w2$rlgatnd),
   "Figure 3.1. Public religious practice dynamics (church attendance)"
-)
+) # The yellow dots represent the proportion of responses in the second wave
 
 make_sankey(
   liws_w1_panel$rlgatnd, liws_w2$rlgatnd,
