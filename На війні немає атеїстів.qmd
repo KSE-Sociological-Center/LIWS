@@ -1,0 +1,1170 @@
+---
+title: "Для Вокс. Зміни в релігійності та коупінг"
+author: "Dkarakai"
+format: docx
+editor: visual
+---
+
+## Бібліотеки
+
+```{r}
+library(tidyverse)
+library(performance)
+library(haven)
+library(labelled)
+library(lubridate)
+library(sf)
+library(readxl)
+library(units)
+
+library(ggsankey)
+library(table1)
+library(gtsummary)
+library(ggpubr)
+library(plotly)
+
+```
+
+## Підготовка даних
+
+```{r}
+load("C:/Users/Daniel_Karakai/Desktop/ESS_10_Ukraine_unofficial/panel_study.RData")
+
+
+
+panel_study_copy <-  panel_study_copy %>%  mutate(
+  # wave1 - Dec 2022, wave2 - Sep 2022. Fieldwork duration ~2 weeks
+  wave = wave %>% fct_recode("Before"="wave1", "After"="wave2")
+  ,waveL = case_when(wave =="Before" ~ 0L,TRUE ~ 1L) 
+  %>% as.integer()  # for geom_smooth to work
+) %>%  
+  select(
+    key    # respondent identifier
+    ,wave  # as a  factor
+    ,waveL # as an integer # for geom_smooth
+    
+    # variables measured at both waves
+    # outcome, religiosity 
+    ,religious = c15 # how religious are you ?         0-10 
+    ,church    = c16 # how often do you attend church? 1-7  
+    ,pray      = c17 # how often do you pray?          1-7  
+    ,religiosity # mean of standardized(M=0,SD=1) items c16, c16, c17 treated as ratio scale
+    ,km_to_war = distance_to_ru_threat_blr_excluded
+    ,life_satisfaction = b27 #  0-10
+    ,happiness = c1          #  0-10
+    
+    # intervention variables measured at wave 2 ONLY (because happened after full-scale invasion)
+    ,loss_dummy3 # know someone who died from war
+    ,displaced   # moved since full-scale invasion
+    # overall index, sum of the following binary variables:
+    # loss_dummy3, # coarsened  q2.3 
+    # displaced,   # coarsened  q1.3
+    # q2.2.1  # loss of income
+    # q2.2.2  # loss of job
+    # q2.2.3  # physical health deterioration
+    # q2.2.4  # mental health deterioration
+    # q2.2.5  # family separation
+    # q2.2.6  # loss or damage to housing
+    # q2.2.7  # loss or damage to other assets
+    # q2.2.8  # injury to you or family members
+    ,affected_index       # 0-10 # larger is more affected by war
+    ,affected_index_std   # standardized: mean=0, sd=1 
+    ,affected_index_dummy # above average adversity: affected_index_std > 0
+    ,everything() )   %>%
+  group_by(key) %>%   
+  arrange(key,waveL) %>% 
+  mutate(
+    relig_change =  religiosity - dplyr::lag(religiosity) 
+    ,relig_increase = case_when(relig_change  < 0   ~ "Decrease",
+                                relig_change == 0  ~  "Stay the same",
+                                relig_change  > 0   ~ "Increase")
+                                
+  ) %>% 
+  arrange(key,desc(waveL)) %>%
+  #select(key, wave, religiosity, relig_change, relig_increase) %>%
+  tidyr::fill(relig_change, relig_increase) %>% # makes person-level
+  arrange(key,waveL) %>%
+  ungroup()   %>% 
+  mutate(
+    km_to_war_bin = cut(km_to_war, breaks = c(10,seq(50,750,50)))
+    ,km100_to_war = km_to_war/100 # re-scale for convenient interpretation
+    ,church_weekly = case_when(
+      church  %in% c(1,2,3)   ~ 1L
+      ,church %in% c(4,5,6,7) ~ 0L
+      ,TRUE ~ NA
+    )
+    ,church_monthly = case_when(
+      church  %in% c(1,2,3,4)   ~ 1L
+      ,church %in% c(5,6,7) ~ 0L
+      ,TRUE ~ NA
+    )
+    ,pray_daily = case_when(
+      pray %in% c(1) ~ 1L
+      ,pray %in% c(2,3,4,5,6,7) ~ 0L
+      ,TRUE ~ NA
+    )
+  ) %>% 
+  group_by(key) %>% 
+  arrange(key,waveL) %>% 
+  mutate(
+    relig_change =  religiosity - dplyr::lag(religiosity) 
+    ,relig_increase = relig_change > 0
+  ) %>% 
+  # select(key, wave, religiosity, relig_change, relig_increase) %>%
+  arrange(key,desc(waveL)) %>%
+  tidyr::fill(relig_change, relig_increase) %>% # makes person-level
+  arrange(key,waveL) %>%
+  ungroup()  
+
+
+```
+
+```{r}
+
+
+# Binning for religiosity
+panel_study_copy <- panel_study_copy %>%
+  mutate(religiosity_bin = cut(religious, breaks = seq(0, 10, by = 2), labels = c("0-2", "2-4", "4-6", "6-8", "8-10")))
+
+# Function to calculate the share of each category
+calculate_share <- function(df, variable) {
+  df %>%
+    group_by(wave, !!sym(variable)) %>%
+    summarise(count = n()) %>%
+    mutate(share = count / sum(count)) %>%
+    select(-count)
+}
+
+
+```
+
+# Зміни на рівні вибірки
+
+## Index
+
+```{r}
+
+# Identify 'keys' of respondents with missing data in any variable in either wave
+keys_with_missing_data <- panel_study_copy$key[!complete.cases(panel_study_copy[, "religiosity"])]
+
+
+# Remove these 'keys' from your data
+pdata_filtered <- panel_study_copy %>% filter(!key %in% keys_with_missing_data)
+
+
+pdata_filtered %>% 
+  ggpubr::ggboxplot(x = "wave", y = "religiosity",
+                    color = "wave",
+                    add = "jitter",
+                     palette = c("MidnightBlue", "#FF4500" )) +
+  stat_compare_means(paired = T,
+                     label.x = 0.5,
+                      size=6 ) +
+     stat_summary(fun.data = function(x) 
+       data.frame(y=2.2, label = paste("Mean=",
+                                       round(mean(x),2) ) ),
+       geom="text",
+        size=6) +
+  
+     stat_summary(fun.data = function(x) 
+       data.frame(y=2, label = paste("SD=", round(sd(x),2) ) ),
+       geom="text",
+        size=6) + 
+  
+  scale_y_continuous(name = "Religious involvement") +
+  
+  scale_x_discrete(name = "") +
+  
+  theme(text = element_text(size = 18))
+
+
+ ggsave("religiosity index_comparison.png" , dpi = 500)
+
+```
+
+## 
+
+## -Відвідуваність церкви
+
+```{r}
+
+# church attendance 
+church_shift <- calculate_share(panel_study_copy, "church")
+
+# Pivot to have Wave1 and Wave2 in separate columns
+church_shift_pivot <- church_shift %>%
+  pivot_wider(names_from = wave, values_from = share, names_prefix = "wave_")
+
+# Determine direction of change
+church_shift_pivot <- church_shift_pivot %>%
+  mutate(direction = ifelse(wave_Before < wave_After, "increase", "decrease"),
+         change = wave_After - wave_Before,
+         church = as_factor(church))
+
+
+church_shift_pivot$church <- forcats::fct_explicit_na(church_shift_pivot$church, na_level = "Важко відповідти/Відмова")
+church_shift_pivot$church <- forcats::fct_rev(church_shift_pivot$church)
+
+
+# Plot church attendance
+ggplot(church_shift_pivot, aes(y = church, x = wave_Before, xend = wave_After, yend = church, color = direction)) +
+  geom_segment(size = 14.5, alpha = 0.5) +
+  geom_point(aes(y = church, x = wave_After), color = "gold", size = 10) +
+   geom_text(aes(y = church, x = 0.47, label = scales::percent(change, accuracy = 0.1)), vjust = 0, size = 10) +
+  theme_minimal() +
+  labs(
+    x = "",
+    y = ""
+#    title = "Зміна відповідей на запитання:", 
+#    subtitle  = "\nНе враховуючи такі випадки, як весілля або поховання, \nяк часто Ви зараз відвідуєте церкву (костьол, мечеть, синагогу...)?\n"
+  ) +
+  scale_color_manual(values = c("increase" = "MidnightBlue", "decrease" = "#FF4500")) + 
+scale_x_continuous(labels = scales::percent, breaks = seq(0, 0.4, by = 0.1), limits = c(0, 0.5)) +
+  theme(legend.position = "none", 
+        text = element_text(family = "serif", size = 24))
+
+ ggsave("church_shift.png" , dpi = 500)
+
+```
+
+## -Частота молитви
+
+```{r}
+
+# pray frequency
+pray_shift <- calculate_share(panel_study_copy, "pray")
+
+# Pivot to have Wave1 and Wave2 in separate columns
+pray_shift_pivot <- pray_shift %>%
+  pivot_wider(names_from = wave, values_from = share, names_prefix = "wave_")
+
+
+# Determine direction of change
+pray_shift_pivot <- pray_shift_pivot %>%
+  mutate(direction = ifelse(wave_Before < wave_After, "increase", "decrease"),
+         change = wave_After - wave_Before,
+         pray = as_factor(pray))
+
+
+pray_shift_pivot$pray <- forcats::fct_explicit_na(pray_shift_pivot$pray, na_level = "Важко відповідти/Відмова")
+pray_shift_pivot$pray <- forcats::fct_rev(pray_shift_pivot$pray)
+
+
+# Plot pray attendance
+ggplot(pray_shift_pivot, aes(y = pray, x = wave_Before, xend = wave_After, yend = pray, color = direction)) +
+  geom_segment(size = 14.5, alpha = 0.5) +
+  geom_point(aes(y = pray, x = wave_After), color = "gold", size = 10) +
+   geom_text(aes(y = pray, x = 0.55, label = scales::percent(change, accuracy = 0.1)), vjust = 0, size = 10) +
+  theme_minimal() +
+  labs(
+    x = "",
+    y = ""
+#    title = "Зміна відповідей на запитання:", 
+#   subtitle  = "\nОкрім тих випадків, коли Ви відвідуєте церкву (костьол, \nмечеть, синагогу...), як часто Ви молитеся?\n"
+  ) +
+  scale_color_manual(values = c("increase" = "MidnightBlue", "decrease" = "#FF4500")) + 
+scale_x_continuous(labels = scales::percent, breaks = seq(0, 0.5, by = 0.1), limits = c(0, 0.6)) +
+  theme(legend.position = "none", 
+        text = element_text(family = "serif", size = 24))
+
+
+ ggsave("pray_shift.png" , dpi = 500)
+
+```
+
+## -Cуб'єктивна релігійність
+
+```{r}
+
+# subjective religiosity
+religious_shift <- calculate_share(panel_study_copy, "religiosity_bin")
+
+# Pivot to have Wave1 and Wave2 in separate columns
+religious_shift_pivot <- religious_shift %>%
+  pivot_wider(names_from = wave, values_from = share, names_prefix = "wave_")
+
+
+# Determine direction of change
+religious_shift_pivot <- religious_shift_pivot %>%
+  mutate(direction = ifelse(wave_Before < wave_After, "increase", "decrease"),
+         change = wave_After - wave_Before,
+         religious = as_factor(religiosity_bin))
+
+
+religious_shift_pivot$religious <- forcats::fct_explicit_na(religious_shift_pivot$religious, na_level = "Важко відповідти/Відмова")
+
+
+# Reorder factor levels
+new_levels <- c("Важко відповідти/Відмова", "0-2", "2-4", "4-6", "6-8", "8-10")
+religious_shift_pivot$religious <- factor(religious_shift_pivot$religious, levels = new_levels)
+
+
+
+
+
+# Plot religious attendance
+ggplot(religious_shift_pivot, aes(y = religious, x = wave_Before, xend = wave_After, yend = religious, color = direction)) +
+  geom_segment(size = 14.5, alpha = 0.5) +
+  geom_point(aes(y = religious, x = wave_After), color = "gold", size = 10) +
+   geom_text(aes(y = religious, x = 0.55, label = scales::percent(change, accuracy = 0.1)), vjust = 0, size = 10) +
+  theme_minimal() +
+  labs(
+    x = "",
+    y = ""
+#    title = "Зміна відповідей на запитання:", 
+#    subtitle  = "\nНезалежно від того, чи відносите Ви себе до певного віросповідання,\nскажіть, будь-ласка, наскільки Ви є релігійною людиною?\n"
+  ) +
+  scale_color_manual(values = c("increase" = "MidnightBlue", "decrease" = "#FF4500")) + 
+scale_x_continuous(labels = scales::percent, breaks = seq(0, 0.5, by = 0.1), limits = c(0, 0.6)) +
+  theme(legend.position = "none", 
+        text = element_text(family = "serif", size = 24))
+
+
+ ggsave("religious_shift.png" , dpi = 500)
+
+
+```
+
+\
+
+# Індивідуальні зміни
+
+### Частота молитви
+
+```{r}
+
+
+data =  panel_study_copy |> 
+  select(wave, pray, key)   %>%
+  
+  pivot_wider(names_from = wave, values_from = pray)  %>%
+  group_by(Before, After) %>%
+  summarise(n = round(n()/595*100, 2) ) 
+
+
+#forcats::fct_explicit_na(as_factor(data$Before), na_level = "Важко відповідти/Відмова")
+
+data$Before <-  as_factor(data$Before) %>% str_c("Кінець зими 2022: ", . ) %>% factor()
+
+
+
+data$After <- as_factor(data$After) %>% str_c("Початок осені 2023: ", . ) %>% factor()
+
+
+#cat(c(levels(data$Before), levels(data$After)), sep = "\n, \"")
+
+
+# Create a nodes data frame
+nodes <- data.frame( name = c( 
+  
+#    "Кінець зими 2022: Важко відповідти/Відмова"
+   "Кінець зими 2022: Ніколи"
+  , "Кінець зими 2022: Ще рідше"
+  , "Кінець зими 2022: Лише у релігійні свята"
+  , "Кінець зими 2022: Принаймні один раз на місяць"
+  , "Кінець зими 2022: Один раз на тиждень"
+  , "Кінець зими 2022: Більше одного разу на тиждень"
+  , "Кінець зими 2022: Щодня"
+  
+#  "Початок осені 2023: Важко відповідти/Відмова"
+, "Початок осені 2023: Ніколи"
+, "Початок осені 2023: Ще рідше"
+, "Початок осені 2023: Лише у релігійні свята"
+, "Початок осені 2023: Принаймні один раз на місяць"
+, "Початок осені 2023: Один раз на тиждень"
+, "Початок осені 2023: Більше одного разу на тиждень"
+, "Початок осені 2023: Щодня") ) 
+
+
+
+
+
+# Replace Before and After in the data with these numerical indices
+data <- data %>%
+  mutate(
+    Before_1 = match(Before, nodes$name) - 1,
+    After_1  = match(After, nodes$name) - 1
+  )
+
+
+
+
+
+data = data.frame(data) %>% arrange(Before, After)
+
+
+unique_before <- unique(data$Before)
+
+#"#F4F2C9" "#F4F4F4" "#4488BF"
+color_map <- c("#e3aa03", "silver" ,"#FF4500",  "#e3a103" , "#fcc31e","#265999", "MidnightBlue")
+color_variable <- sapply(data$Before, function(x) color_map[which(unique_before == x)])
+
+
+
+
+# Create the Sankey diagram
+fig <- plot_ly(
+  type = "sankey",
+  orientation = "h",
+    arrangement = "freeform",
+  
+  
+  
+  node = list(
+    pad = 7,
+    thickness = 5,
+    line = list(color = "black", width = 0.2),
+    label = nodes$name,
+    color = c("black"),
+     x = c(1e-09, 1e-09, 1e-09, 1e-09, 1e-09, 1e-09, 1e-09,
+           0.99,  0.99,  0.99,  0.99,  0.99,  0.99,  0.99),
+  
+    y = c(  0.99,    0.8,    0.6,    0.55,    0.5,   0.43, 0.2,  
+            0.99,    0.8,    0.65,   0.6,    0.55,   0.5, 0.2 )
+  ),
+  link = list(
+    source = data$Before_1,
+    target = data$After_1,
+    value  = data$n,
+    color = color_variable  # Use the color vector here
+  )
+) %>% 
+  layout(
+    title = list(
+      text = "",
+      font = list(
+        size = 16,
+        color = "#333333", 
+        x = 0.9
+      ),
+      x = 0.2
+    ),
+    font = list(
+      family = "Arial",
+      size = 17,
+      color = "#333333"
+    ),
+    xaxis = list(showgrid = FALSE),
+    yaxis = list(showgrid = FALSE)
+  )
+
+# Show the plot
+api_create(fig, filename = "frequency of pray")
+
+```
+
+### Відвідування церкви
+
+```{r}
+
+
+data =  panel_study_copy |> 
+  select(wave, church, key)   %>%
+  
+  pivot_wider(names_from = wave, values_from = church)  %>%
+  group_by(Before, After) %>%
+  summarise(n = round(n()/595*100, 2) ) 
+
+
+#forcats::fct_explicit_na(as_factor(data$Before), na_level = "Важко відповідти/Відмова")
+
+data$Before <-  as_factor(data$Before) %>% str_c("Кінець зими 2022: ", . ) %>% factor()
+
+
+
+data$After <- as_factor(data$After) %>% str_c("Початок осені 2023: ", . ) %>% factor()
+
+
+#cat(c(levels(data$Before), levels(data$After)), sep = "\n, \"")
+
+
+# Create a nodes data frame
+nodes <- data.frame( name = c( 
+  
+#    "Кінець зими 2022: Важко відповідти/Відмова"
+   "Кінець зими 2022: Ніколи"
+  , "Кінець зими 2022: Ще рідше"
+  , "Кінець зими 2022: Лише у релігійні свята"
+  , "Кінець зими 2022: Принаймні один раз на місяць"
+  , "Кінець зими 2022: Один раз на тиждень"
+  , "Кінець зими 2022: Більше одного разу на тиждень"
+  , "Кінець зими 2022: Щодня"
+  
+#  "Початок осені 2023: Важко відповідти/Відмова"
+, "Початок осені 2023: Ніколи"
+, "Початок осені 2023: Ще рідше"
+, "Початок осені 2023: Лише у релігійні свята"
+, "Початок осені 2023: Принаймні один раз на місяць"
+, "Початок осені 2023: Один раз на тиждень"
+, "Початок осені 2023: Більше одного разу на тиждень"
+, "Початок осені 2023: Щодня") ) 
+
+
+
+
+
+# Replace Before and After in the data with these numerical indices
+data <- data %>%
+  mutate(
+    Before_1 = match(Before, nodes$name) - 1,
+    After_1  = match(After, nodes$name) - 1
+  )
+
+
+
+
+
+data = data.frame(data) %>% arrange(Before, After)
+
+
+unique_before <- unique(data$Before)
+
+#"#F4F2C9" "#F4F4F4" "#4488BF"
+color_map <- c("#e3aa03", "silver" ,"#FF4500",  "#e3a103" , "#fcc31e","#265999", "MidnightBlue")
+color_variable <- sapply(data$Before, function(x) color_map[which(unique_before == x)])
+
+
+
+
+# Create the Sankey diagram
+fig <- plot_ly(
+  type = "sankey",
+  orientation = "h",
+    arrangement = "freeform",
+  
+  
+  
+  node = list(
+    pad = 7,
+    thickness = 5,
+    line = list(color = "black", width = 0.2),
+    label = nodes$name,
+    color = c("black"),
+     x = c(1e-09, 1e-09, 1e-09, 1e-09, 1e-09, 1e-09, 1e-09,
+           0.99,  0.99,  0.99,  0.99,  0.99,  0.99,  0.99),
+  
+    y = c(  0.99,    0.8,    0.5,    0.23,      0.1,  0.03, 0.01,  
+            0.99,    0.8,    0.5,    0.23,      0.1,   0.03, 0.01 )
+  ),
+  link = list(
+    source = data$Before_1,
+    target = data$After_1,
+    value  = data$n,
+    color = color_variable  # Use the color vector here
+  )
+) %>% 
+  layout(
+    title = list(
+      text = "",
+      font = list(
+        size = 16,
+        color = "#333333", 
+        x = 0.9
+      ),
+      x = 0.2
+    ),
+    font = list(
+      family = "Arial",
+      size = 17,
+      color = "#333333"
+    ),
+    xaxis = list(showgrid = FALSE),
+    yaxis = list(showgrid = FALSE)
+  )
+
+# Show the plot
+
+api_create(fig, filename = "church attendance")
+
+
+```
+
+## ДОДАТКИ
+
+## Соцдем тих, хто потрапив до панелі та не потрапив
+
+```{r}
+
+ wave1 <- read_sav("Data/ESS_10_Ukraine_unofficial_beforeZ.sav") %>%
+  mutate(common_key = if_else(
+                              KEY %in% panel_study_copy$key, 1, 0),
+         common_keyF = common_key %>%
+           factor( levels = c(1,0) , 
+                   labels = c("Потрапили в панель",
+                              "Не потрапили в панель")))
+
+
+#Склад макрорегіонів такий: Західний макрорегіон – Волинська, Рівненська. Львівська, Івано-Франківська, Тернопільська, Закарпатська, Хмельницька, Чернівецька області; Центральний макрорегіон – Вінницька, Житомирська, Сумська, Чернігівська, Полтавська, Кіровоградська, Черкаська, Київська області, м. Київ, Південний макрорегіон – Дніпропетровська, Запорізька, Миколаївська, Херсонська, Одеська області, Східний макрорегіон – Донецька, Луганська і Харківська області.
+ 
+ 
+# Освіта                              == F15 (перекодувати)
+# Стать                               == F2Z1 
+# Регіон                              == OBL (макрорегіони створити)
+# Тип населеного пункту               == STLM_SIZEO 
+# Вік                                 == AGE (вікові інтерали зробити)
+
+ 
+wave1 =  wave1 %>%  mutate(
+   education_3 = case_when(
+                            F15 %in% c(0, 1, 2, 3) ~ 1,
+                            F15 %in% c(4, 5, 6, 7) ~ 2,
+                            F15 %in% c(8, 9, 10)   ~ 3,
+                            TRUE                   ~ NA_real_
+                            ),
+   
+   education_3 = factor(education_3, levels = c(1, 2, 3),
+                     labels = c("Немає Середньої освіти",
+                                "Є Повна середня освіта + ПТУ/Неповна вища",
+                                "Є повна вища освіта")
+                            ),
+   sex_M       = ifelse(
+                            F2Z1 == 1, 1,0
+                       ) %>% factor( levels = c(1,0) , 
+                                     labels = c("Чоловіча", "Жіноча")), 
+   
+   macroregion = case_when(
+                           OBL %in% c(5, 18, 14, 11, 20, 9, 23, 25)   ~ "Західний",
+                           OBL %in% c(4, 8, 19, 26, 17, 12, 24, 3, 2) ~ "Центральний",
+                           OBL %in% c(6, 10, 15, 22, 16)              ~ "Південний",
+                           OBL %in% c(7, 13, 21)                      ~ "Східний",
+                           OBL == -99                                 ~ NA,
+                            ),
+   
+   
+   
+   stlm_size    = as_factor(STLM_SIZEo),
+   
+   age_interval = cut(
+                        AGE, 
+                        breaks = c(14, 20, 30, 40,
+                                   50, 60, 70, 80, Inf),
+                        labels = c('15-20', '21-30', '31-40',
+                                   '41-50', '51-60', '61-70',
+                                   '71-80', '81+'),
+                        right = TRUE,
+                        include.lowest = TRUE)
+   ,.before = everything()  
+   )
+
+
+
+wave1$stlm_size <-  droplevels(wave1$stlm_size)
+
+
+#### confession and belonging to religion 
+
+# Instrumental variable to avoid overlapping codes
+wave1$C12B_R <- wave1$C12B  * -1 
+wave1$C12B_R[wave1$C12B_R %in% c(-5, -6)] <-  NA 
+
+
+
+# Creating new merged and recoded variable
+wave1 <- wave1 %>%
+  mutate(confession = case_when(
+    # If c12 is 1 and c12b_r is not NA, use c12b_r
+    C12 == 1 ~ C12B_R, 
+    
+    
+    
+    # Unite specific values into one category
+    C12 %in% c(3, 4, 5) ~ 3,  # Other christians
+    C12 %in% c(6, 8, 9, 77) ~ 4,  # Other 
+    
+    # If none of the above conditions are met, use c12
+    TRUE ~ C12 
+  ),
+  
+  belong_to_religion_w1 = case_when(C11 %in% c(7,8)  ~ NA, TRUE ~ C11)
+  ,.before = everything()
+  )
+
+# Convert confession to labelled class
+wave1$confession <- labelled(
+  wave1$confession,
+  c("Просто православний,\n без визначення патріархату" = -3, 
+    "УПЦ МП" = -2,
+    "ПЦУ" = -1,
+    "Греко-католицька Церква" = 2,
+    "Інші християнські церкви" = 3,
+    "Інша конфесія" = 4)
+)
+ 
+
+
+
+
+wave1$belong_to_religion_w1 <- labelled(
+  wave1$belong_to_religion_w1,
+  c("Так" = 1, 
+    "Ні" = 2 ))
+
+```
+
+\
+
+```{r}
+
+table1::label(wave1$education_3) <- "Рівень освіти"
+table1::label(wave1$sex_M) <- "Стать респондента"
+table1::label(wave1$macroregion) <- "Макрорегіон"
+table1::label(wave1$stlm_size) <-  "Тип населенного пункту"
+table1::label(wave1$age_interval) <- "Вікові інтервали" 
+table1::label(wave1$AGE) <- "Вік респондента" 
+table1::label(wave1$confession) <- "Релігія респондента"
+table1::label(wave1$belong_to_religion_w1) <- "Приналежніть до певної релігї" 
+
+
+
+
+
+
+pvalue <- function(x, ...) {
+    # Construct vectors of data y, and groups (strata) g
+    y <- unlist(x)
+    g <- factor(rep(1:length(x), times=sapply(x, length)))
+    if (is.numeric(y)) {
+        # For numeric variables, perform a standard 2-sample t-test
+        p <- t.test(y ~ g)$p.value
+    } else {
+        # For categorical variables, perform a chi-squared test of independence
+        p <- chisq.test(table(y, g))$p.value
+    }
+    # Format the p-value, using an HTML entity for the less-than sign.
+    # The initial empty string places the output on the line below the variable label.
+    c("", sub("<", "&lt;", format.pval(p, digits=3, eps=0.001)))
+}
+
+
+
+table1::table1(~education_3 + sex_M + macroregion +
+                 stlm_size  + age_interval +
+                as_factor(confession) + 
+                as_factor(belong_to_religion_w1) | common_keyF,
+               data = wave1,
+               extra.col=list(`P-value`=pvalue)) 
+ 
+
+wave1$education_3 <- fct_rev(wave1$education_3 )
+wave1$stlm_size <-   fct_rev(wave1$stlm_size )
+
+
+
+model = glm(common_key ~ education_3 + sex_M + macroregion +
+              stlm_size + AGE + confession + belong_to_religion_w1,
+                   data = wave1,
+                   family = binomial(link = 'logit')
+            ) # %>% tbl_regression(label = list(stlm_size ~ "Тип населенного пункту")) %>%
+    bold_labels()  %>% bold_p()
+
+
+model_glm_pred = ifelse(predict(model, type = "link") >=  0, 1, 0)
+
+
+
+
+wave1_clean <- na.omit(wave1[, c("education_3", "sex_M", "macroregion", "stlm_size", "AGE", "common_key")])
+
+calc_class_err = function(actual, predicted) {
+  mean(actual != predicted)
+}
+
+calc_class_err(actual = wave1_clean$common_key, predicted = model_glm_pred)
+```
+
+```{r}
+
+edutest = panel_study_copy |> select(key, wave, waveL, pray, church, religious, religiosity, education_3, f16, stlm_sizeo, stlm_size_w2, relig_increase, f42)
+
+
+
+edutest = edutest  %>% 
+  mutate(
+    edu_duration = case_when(f16 %in% c(-99, 77, 88) ~ NA_real_, TRUE ~ f16)
+  )  %>%
+  group_by(key) %>%   
+  arrange(key,waveL) %>% 
+  tidyr::fill(edu_duration) %>% # makes person-level
+  arrange(key,waveL) %>%
+  ungroup()    %>%  select(- f16)  %>% 
+    group_by(key) %>%   
+  arrange(key, waveL) %>% 
+  tidyr::fill(stlm_sizeo) %>% # makes person-level
+  arrange(key,waveL) %>%
+  ungroup()  %>% 
+    group_by(key) %>%   
+  arrange( key,desc(waveL)) %>% 
+  tidyr::fill(relig_increase) %>% # makes person-level
+  arrange(key,waveL) %>%
+  ungroup() %>% 
+    group_by(key) %>%   
+  arrange( key,desc(waveL)) %>% 
+  tidyr::fill(stlm_size_w2) %>% # makes person-level
+  arrange(key,waveL) %>%
+  ungroup() %>% 
+  mutate(
+    income_comfort = case_when(f42 %in% c(-99, 7, 8) ~ NA_real_, TRUE ~ f42)
+  )  %>%
+  group_by(key) %>%   
+  arrange(key,waveL) %>% 
+  tidyr::fill(income_comfort) %>% # makes person-level
+  arrange(key,waveL) %>%
+  ungroup()
+  
+
+
+edutest %>%  drop_na(relig_increase) |> 
+  ggplot(aes(x=waveL, y = religiosity, color = relig_increase))+ # note re-centering to align with model coefficients
+  geom_point(alpha = .2)+
+  geom_line(aes(group = key),alpha = .15,
+            linewidth = 1)+
+  scale_x_continuous(breaks = c(0,1))+
+  labs(
+    title = "Individual change in standardized religiosity index "
+    ,subtitle = "Religiosity Index = (Church attendance, Prayer, Self-reported Religiosity) | M=0,SD=1"
+  ) + facet_wrap(~  relig_increase * as_factor(stlm_size_w2) ) +    geom_smooth(method = "lm", color = "gold") 
+
+
+
+line_equation <- 
+  ggpmisc::stat_poly_eq(formula = y ~ + x 
+                        # ,aes(label = paste0(c(after_stat(rr.label),after_stat(eq.label)))) # can't get the same behavior
+                        ,aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~"))
+                        ,parse = TRUE
+                        ,label.x = 0.1
+                        ,label.y = 1.5,color = "blue",vjust=1.2) 
+
+edutest %>%  drop_na(relig_increase) |> 
+  ggplot(aes(x=waveL, y = religiosity, color = relig_increase))+ # note re-centering to align with model coefficients
+  geom_point(alpha = .2)+
+  geom_line(aes(group = key),alpha = .15,
+            linewidth = 1)+
+  scale_x_continuous(breaks = c(0,1))+
+  labs(
+    title = "Individual change in standardized religiosity index "
+    ,subtitle = "Religiosity Index = (Church attendance, Prayer, Self-reported Religiosity) | M=0,SD=1"
+  ) + facet_wrap(~  relig_increase * as_factor(stlm_size_w2) ) +    geom_smooth(method = "lm", color = "gold")  +
+  line_equation
+
+
+
+
+
+edutest %>% 
+  ggplot(aes(x=waveL, y = religiosity, color = relig_increase))+ # note re-centering to align with model coefficients
+  geom_point(alpha = .2)+
+  geom_line(aes(group = key),alpha = .15,
+            linewidth = 1)+
+  scale_x_continuous(breaks = c(0,1))+
+  labs(
+    title = "Individual change in standardized religiosity index "
+    ,subtitle = "Religiosity Index = (Church attendance, Prayer, Self-reported Religiosity) | M=0,SD=1"
+  ) + facet_grid(~ as_factor(income_comfort)) +    geom_smooth(method = "lm", color = "gold") 
+
+
+
+
+
+
+
+
+#############################3
+
+
+
+panel_study_copy %>%  drop_na(relig_increase) |> 
+  ggplot(aes(x=waveL, y = religiosity, color = relig_increase))+ # note re-centering to align with model coefficients
+  geom_point(alpha = .2)+
+  geom_line(aes(group = key),alpha = .15,
+            linewidth = 1)+
+  scale_x_continuous(breaks = c(0,1))+
+  labs(
+    title = "Individual change in standardized religiosity index "
+    ,subtitle = "Religiosity Index = (Church attendance, Prayer, Self-reported Religiosity) | M=0,SD=1"
+  ) + facet_wrap(~  relig_increase * as_factor(age_interval) ) +    geom_smooth(method = "lm", color = "gold")  +
+  line_equation
+
+
+
+
+```
+
+# Кофірматорний факторний аналіз
+
+```{r}
+library(lavaan)
+
+
+
+# Reverse the scale for 'church' and 'pray'
+panel_study_copy$church_r <- 8 - panel_study_copy$church
+panel_study_copy$pray_r <- 8 - panel_study_copy$pray
+
+# Define the CFA model
+model_syntax <- '
+  Religiosity =~ church_r + pray_r + religious
+'
+
+# Perform the CFA, treating the variables as ordered
+fit <- sem(model_syntax, data = panel_study_copy, ordered = T, estimator = "WLSMV", std.lv  = T)
+
+# Show summary
+summary(fit, fit.measures = TRUE,
+        standardized = TRUE)
+
+```
+
+```{r}
+
+
+panel_study_copy %>% group_by(key) %>%
+  arrange(key, desc(wave)) %>%
+  tidyr::fill(stlm_size_w2 ) %>% # makes person-level
+  arrange(desc(wave), key) %>%
+  ungroup() %>%  drop_na(relig_increase) |> 
+  ggplot(aes(x=waveL, y = religiosity, color = relig_increase))+ # note re-centering to align with model coefficients
+  geom_point(alpha = .2)+
+  geom_line(aes(group = key),alpha = .15,
+            linewidth = 1)+
+  scale_x_continuous(breaks = c(0,1))+
+  labs(
+    title = "Individual change in standardized religiosity index "
+    ,subtitle = "Religiosity Index = (Church attendance, Prayer, Self-reported Religiosity) | M=0,SD=1"
+  ) + facet_wrap(~  as_factor(stlm_size_w2) * as_factor(age_interval) ) +    geom_smooth(method = "lm", color = "gold")  +
+  line_equation
+
+
+
+
+x = panel_study_copy 
+x$q2.2.4[x$wave == "Before"] = NA
+x$q2.2.3[x$wave == "Before"] = NA
+x$loss_dummy3[x$wave == "Before"] = NA
+x$loss_dummy2[x$wave == "Before"] = NA
+
+x$q2.2.4 = labelled(x$q2.2.4, labels = c("Report mental health deterioration" = 1, "Do not Report mental health deterioration" = 0))
+
+x %>% group_by(key) %>%
+  arrange(key, desc(wave)) %>%
+  tidyr::fill(q2.2.4) %>% # makes person-level
+  arrange(desc(wave), key) %>%
+  ungroup()  %>%
+  drop_na(relig_increase) |> 
+  ggplot(aes(x=waveL, y = religiosity,
+             color = relig_increase ))+ # note re-centering to align with model coefficients
+  geom_point(alpha = .2 ) +
+  geom_line(aes(group = key),alpha = .15,
+            linewidth = 1  ) +
+  scale_x_continuous(breaks = c(0,1))+
+  labs(
+    title = "Individual change in standardized religiosity index "
+    ,subtitle = "Religiosity Index = (Church attendance, Prayer, Self-reported Religiosity) | M=0,SD=1"
+  ) + facet_wrap(~  as_factor(q2.2.4 ) * relig_increase ) +    geom_smooth(method = "lm", color = "gold")  +
+  theme_minimal() +
+  line_equation + theme( text = element_text(size = 24) ) + scale_color_manual(values = c("MidnightBlue", "#FF4500")) 
+
+x$q2.2.3 = labelled(x$q2.2.3, labels = c("Report physical  health deterioration" = 1, "Do not Report physical  health deterioration" = 0))
+
+
+ ggsave("mental_health.png" , dpi = 500)
+
+
+
+x %>% group_by(key) %>%
+  arrange(key, desc(wave)) %>%
+  tidyr::fill(q2.2.3 ) %>% # makes person-level
+  arrange(desc(wave), key) %>%
+  ungroup()  %>%
+  drop_na(relig_increase) |> 
+  ggplot(aes(x=waveL, y = religiosity),
+             color = relig_increase )) + # note re-centering to align with model coefficients
+  geom_point(alpha = .2 ) +
+  geom_line(aes(group = key),alpha = .15,
+            linewidth = 1  ) +
+  scale_x_continuous(breaks = c(0,1))+
+  labs(
+    title = "Individual change in standardized religiosity index "
+    ,subtitle = "Religiosity Index = (Church attendance, Prayer, Self-reported Religiosity) | M=0,SD=1"
+  ) + facet_wrap(~  as_factor(q2.2.3 ) ) +    geom_smooth(method = "lm", color = "gold")  +
+  theme_minimal() +
+  line_equation_std + theme( text = element_text(size = 24) ) + scale_color_manual(values = c("MidnightBlue", "#FF4500")) 
+
+
+
+line_equation_std <- 
+  ggpmisc::stat_poly_eq(formula = y ~ scale(x),
+                        aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~")),
+                        parse = TRUE,
+                        label.x = 0.1,
+                        label.y = 1.5,
+                        color = "blue",
+                        vjust = 1.2)
+
+
+
+
+ ggsave("physical_health.png" , dpi = 500)
+
+
+
+
+```
+
+```{r}
+
+waveL
+religiosity
+relig_increase
+
+cor_test("waveL", "religiosity",
+         data = panel_study_copy)
+
+
+
+x = panel_study_copy 
+x$q2.2.3[x$wave == "Before"] = NA
+x$q2.2.4[x$wave == "Before"] = NA
+x$affected_index_dummy[x$wave == "Before"] = NA
+
+x = x %>% group_by(key) %>%
+  arrange(key, desc(wave)) %>%
+  tidyr::fill(q2.2.3 ) %>% # makes person-level
+  arrange(desc(wave), key) %>%
+  ungroup()  %>%  mutate(
+  target_group = case_when(
+    relig_increase == F & q2.2.3 == 0 ~ "religiosity - & ph health deterioration -",
+    
+    relig_increase == F & q2.2.3 == 1 ~ "religiosity - & ph health deterioration +",
+    
+    
+    relig_increase == T & q2.2.3 == 0 ~ "religiosity + & ph health deterioration -",
+    
+    
+    relig_increase == T & q2.2.3 == 1 ~ "religiosity + & ph health deterioration +",
+    TRUE ~ "Other"  # Default case
+  )
+)
+
+
+
+
+
+diff_in_reggroups <- x  |> 
+  select(key, target_group, wave, religiosity, affected_index_dummy) |> 
+  pivot_wider(names_from = wave, values_from = religiosity, id_cols = key) |> 
+  mutate(difference = `After` - `Before`) |> 
+  left_join(select(
+    x[x$wave == "After", ],
+    key, target_group, affected_index_dummy),
+    by = "key")  %>%
+  filter(!is.na(target_group))
+  
+
+ggboxplot(diff_in_reggroups, x = "target_group", y = "difference", 
+          color = "target_group", palette = "jco") +
+ stat_compare_means(
+    comparisons = list(
+      c("religiosity - & ph health deterioration -", "religiosity - & ph health deterioration +"),
+      c("religiosity + & ph health deterioration -", "religiosity + & ph health deterioration +")
+
+    ),
+    label = "p.signif", p.adjust.method = "bonferroni") +
+  labs(title = "Comparison of Differences Between Target Groups (Physical Health)",
+       x = "Target Group", y = "Difference in Religiosity") +
+  theme(legend.position = "none")
+
+
+
+
+
+
+x = x %>% group_by(key) %>%
+  arrange(key, desc(wave)) %>%
+  tidyr::fill(q2.2.4 ) %>% # makes person-level
+  arrange(desc(wave), key) %>%
+  ungroup()  %>%  mutate(
+  target_group_mh = case_when(
+    relig_increase == F & q2.2.4 == 0 ~ "religiosity - & mh health deterioration -",
+    relig_increase == F & q2.2.4 == 1 ~ "religiosity - & mh health deterioration +",
+    relig_increase == T & q2.2.4 == 0 ~ "religiosity + & mh health deterioration -",
+    relig_increase == T & q2.2.4 == 1 ~ "religiosity + & mh health deterioration +",
+    TRUE ~ "Other"  # Default case
+  )
+)
+
+
+
+diff_in_reggroups_mh <- x  |> 
+  select(key, target_group_mh, wave, religiosity, affected_index_dummy) |> 
+  pivot_wider(names_from = wave, values_from = religiosity, id_cols = key) |> 
+  mutate(difference = `After` - `Before`) |> 
+  left_join(select(
+    x[x$wave == "After", ],
+    key, target_group_mh, affected_index_dummy),
+    by = "key")  %>%
+  filter(!is.na(target_group_mh))
+
+
+
+
+ggboxplot(diff_in_reggroups_mh, x = "target_group_mh", y = "difference", 
+          color = "target_group_mh", palette = "jco") +
+ stat_compare_means(
+    comparisons = list(
+      c("religiosity - & mh health deterioration -", "religiosity - & mh health deterioration +"),
+      c("religiosity + & mh health deterioration -", "religiosity + & mh health deterioration +")
+    ),
+    label = "p.signif", p.adjust.method = "bonferroni") +
+  labs(title = "Comparison of Differences Between Target Groups (Mental Health)",
+       x = "Target Group", y = "Difference in Religiosity") +
+  theme(legend.position = "none")
+
+
+
+
+
+
+
+x = x %>% group_by(key) %>%
+  arrange(key, desc(wave)) %>%
+  tidyr::fill(affected_index_dummy ) %>% # makes person-level
+  arrange(desc(wave), key) %>%
+  ungroup()  %>%  mutate(
+  target_group_war = case_when(
+    relig_increase == F & affected_index_dummy == 0 ~ "religiosity - &  Less exposed to war",
+    relig_increase == F & affected_index_dummy == 1 ~ "religiosity - &  More exposed to war",
+    relig_increase == T & affected_index_dummy == 0 ~ "religiosity + &  Less exposed to war",
+    relig_increase == T & affected_index_dummy == 1 ~ "religiosity + &  More exposed to war",
+    TRUE ~ "Other"  # Default case
+  )
+)
+
+
+
+diff_in_reggroups_war <- x  |> 
+  select(key, target_group_war, wave, religiosity, affected_index_dummy) |> 
+  pivot_wider(names_from = wave, values_from = religiosity, id_cols = key) |> 
+  mutate(difference = `After` - `Before`) |> 
+  left_join(select(
+    x[x$wave == "After", ],
+    key, target_group_war, affected_index_dummy),
+    by = "key")  %>%
+  filter(!is.na(target_group_war))
+
+
+
+
+ggboxplot(diff_in_reggroups_war, x = "target_group_war", y = "difference", 
+          color = "target_group_war", palette = "jco") +
+ stat_compare_means(
+    comparisons = list(
+      c("religiosity - &  Less exposed to war", "religiosity - &  More exposed to war"),
+      c("religiosity + &  Less exposed to war", "religiosity + &  More exposed to war")
+    ),
+    label = "p.signif", p.adjust.method = "bonferroni") +
+  labs(title = "Comparison of Differences Between Target Groups (War exposure index dummy)",
+       x = "Target Group", y = "Difference in Religiosity") +
+  theme(legend.position = "none")
+
+
+```
