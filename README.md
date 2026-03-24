@@ -20,7 +20,7 @@ Using these panel data, our team has researched war's influence on individual ch
 6. Moskotina, R. (2025). Wie der Krieg sich auf Glück und Lebenszufriedenheit in der Ukraine auswirkt. *Ukraine-Analysen*. https://laender-analysen.de/ukraine-analysen/319/ukraine-krieg-glueck-lebenszufriedenheit/
 7. Moskotina, R., Karakai, D. (2025). It could have been worse: The analysis of changes in subjective well-being at the beginning of the invasion. https://isnasu.org.ua/analytics/007_Moskotina_Karakay_-_Moglo_buty_girshe.php [In Ukrainian]
 
-For all publications (with the exception of *“Ukrainians’ Attitudes at the Start of the War”*), the **publications** folder contains R code for replicating the results. For the publication without accompanying code, all analyses can be conducted using a Shiny application developed in R (see the link below). Code is also not provided for the preparation of publication appendices or for other datasets (not LIWS data).
+For all publications (with the exception of *“Ukrainians’ Attitudes at the Start of the War”*), the **publications** folder contains R code for replicating the results. For the publication without accompanying code, all analyses can be conducted using a Shiny application developed in R (see the link below). Code is also not provided for the preparation of publication appendices.
 
 If you have any questions about these data or would like to collaborate with us on an article, simply contact us via email: rmoskotina@kse.org.ua
 
