@@ -1,6 +1,6 @@
 # Reproducible Analysis for Publications
 
-This repository contains scripts and data processing workflows used in the quantitative analysis for a series of academic publications. The aim is to ensure transparency, reproducibility, and ease of access for reviewers, collaborators, and readers interested in replicating or building on the findings.
+This repository contains scripts and data processing workflows used in the quantitative analysis for a series of publications. The aim is to ensure transparency, reproducibility, and ease of access for reviewers, collaborators, and readers interested in replicating or building on the findings.
 
 ## 📁 Folder Structure
 
